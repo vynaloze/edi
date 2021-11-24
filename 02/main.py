@@ -84,16 +84,18 @@ class Page:
     ngrams: List[str] = field(default_factory=lambda: list())
     jaccard_index: float = -1
 
-    def build_ngrams(self, n: int):
+    def build_ngrams(self, n: int, bag_of_words: bool):
         words = self.content.split()
         for i in range(len(words) - (n - 1)):
             self.ngrams.append(' '.join(words[i:i + n]))
+        if bag_of_words:
+            self.ngrams = list(set(self.ngrams))
 
     def calculate_jaccard_index(self, reference: 'Page'):
         self.jaccard_index = len([x for x in self.ngrams if x in reference.ngrams]) / len([*reference.ngrams, *self.ngrams])
 
 
-def build_pages_database(initial_url: str, n_gram_size: int, max_depth: int) -> List[Page]:
+def build_pages_database(initial_url: str, n_gram_size: int, max_depth: int, bag_of_words: bool) -> List[Page]:
     pages = [Page(initial_url.rstrip('/'), 0)]
 
     i = 0
@@ -102,7 +104,7 @@ def build_pages_database(initial_url: str, n_gram_size: int, max_depth: int) -> 
         html_parser.parse()
 
         pages[i].content = html_parser.content
-        pages[i].build_ngrams(n_gram_size)
+        pages[i].build_ngrams(n_gram_size, bag_of_words)
 
         current_depth = pages[i].depth
         if current_depth < max_depth:
@@ -120,12 +122,13 @@ def main():
     parser.add_argument('url', nargs=1, metavar='URL', help='initial URL to parse')
     parser.add_argument('--depth', dest='depth', default=2, type=int, help='max depth of the crawler')
     parser.add_argument('--n-gram-size', dest='n_gram_size', default=2, type=int, help='size of n-grams')
+    parser.add_argument('--bag-of-words', dest='bag_of_words', action='store_true', help='use bag-of-words mode')
     args = parser.parse_args()
 
     if args.n_gram_size < 1:
         raise Exception('size of n-grams must be > 0')
 
-    pages = build_pages_database(args.url[0], args.n_gram_size, args.depth)
+    pages = build_pages_database(args.url[0], args.n_gram_size, args.depth, args.bag_of_words)
 
     reference = pages[0]
     child_pages = pages[1:]
