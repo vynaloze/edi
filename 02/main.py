@@ -1,7 +1,7 @@
 import argparse
 import re
 import ssl
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import List
 from urllib.parse import urlparse
@@ -53,14 +53,18 @@ class SinglePageHTMLParser(HTMLParser):
             # relative URL
             path = urlparse(link_value).path
             if link_value.startswith('/'):
+                # relative to the root of the page
                 self.links.append(f'{self.base_url}{path}')
             else:
-                self.links.append(f'{self.url}/{path}')
+                # relative to the current directory
+                match = re.search(r'(https?://.*)/', self.url)
+                current_dir_url = match.group(1) if match else self.url
+                self.links.append(f'{current_dir_url}/{path}')
 
     def handle_data(self, data):
-        # TODO find links also here
         if not self.__ignore_content:
             self.content += data
+            self.links.extend([url for url in re.findall(r'(https?://\S*)', data)])
 
     def error(self, message):
         print(f'Cannot parse HTML for {self.url}: {message}')
@@ -76,13 +80,39 @@ class SinglePageHTMLParser(HTMLParser):
 class Page:
     url: str
     depth: int
-    content: str
-    ngrams: List[str]
+    content: str = ''
+    ngrams: List[str] = field(default_factory=lambda: list())
+    jaccard_index: float = -1
 
     def build_ngrams(self, n: int):
         words = self.content.split()
         for i in range(len(words) - (n - 1)):
             self.ngrams.append(' '.join(words[i:i + n]))
+
+    def calculate_jaccard_index(self, reference: 'Page'):
+        self.jaccard_index = len([x for x in self.ngrams if x in reference.ngrams]) / len([*reference.ngrams, *self.ngrams])
+
+
+def build_pages_database(initial_url: str, n_gram_size: int, max_depth: int) -> List[Page]:
+    pages = [Page(initial_url.rstrip('/'), 0)]
+
+    i = 0
+    while i < len(pages):
+        html_parser = SinglePageHTMLParser(pages[i].url)
+        html_parser.parse()
+
+        pages[i].content = html_parser.content
+        pages[i].build_ngrams(n_gram_size)
+
+        current_depth = pages[i].depth
+        if current_depth < max_depth:
+            for url in html_parser.links:
+                if url not in [l.url for l in pages]:
+                    pages.append(Page(url, current_depth + 1))
+
+        i += 1
+
+    return pages
 
 
 def main():
@@ -95,25 +125,18 @@ def main():
     if args.n_gram_size < 1:
         raise Exception('size of n-grams must be > 0')
 
-    pages = [Page(args.url[0], 0, "", [])]
+    pages = build_pages_database(args.url[0], args.n_gram_size, args.depth)
 
-    i = 0
-    while i < len(pages):
-        html_parser = SinglePageHTMLParser(pages[i].url)
-        html_parser.parse()
+    reference = pages[0]
+    child_pages = pages[1:]
+    for page in child_pages:
+        page.calculate_jaccard_index(reference)
 
-        pages[i].content = html_parser.content
-        pages[i].build_ngrams(args.n_gram_size)
+    child_pages.sort(key=lambda p: p.jaccard_index, reverse=True)
 
-        current_depth = pages[i].depth
-        if current_depth < args.depth:
-            for url in html_parser.links:
-                if url not in [l.url for l in pages]:
-                    pages.append(Page(url, current_depth + 1, "", []))
-
-        i += 1
-
-    print(pages)
+    print('jaccard_index,url')
+    for page in child_pages[:3]:
+        print(f'{page.jaccard_index},{page.url}')
 
 
 if __name__ == '__main__':
