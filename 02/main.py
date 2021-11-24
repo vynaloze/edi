@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 
 import certifi
+import numpy as np
 
 TIMEOUT_SECONDS = 10
 
@@ -28,6 +29,9 @@ class SinglePageHTMLParser(HTMLParser):
                 self.feed(u.read().decode('utf8'))
         except Exception as e:
             print(f'Cannot access {self.url}: {e}')
+        finally:
+            # sanitize links
+            self.links = [l.rstrip('/') for l in self.links]
 
     def handle_endtag(self, tag):
         if tag in ['script', 'style']:
@@ -72,8 +76,8 @@ class SinglePageHTMLParser(HTMLParser):
     def __parse_url(self, url: str):
         parsed_url = urlparse(url)
         self.base_url = f'{parsed_url.scheme}://{parsed_url.netloc}'
-        self.url_path = parsed_url.path
-        self.url = f'{self.base_url}{self.url_path}'.rstrip('/')
+        self.url_path = parsed_url.path.rstrip('/')
+        self.url = f'{self.base_url}{self.url_path}'
 
 
 @dataclass
@@ -82,7 +86,7 @@ class Page:
     depth: int
     content: str = ''
     ngrams: List[str] = field(default_factory=lambda: list())
-    jaccard_index: float = -1
+    similarity: float = -1
 
     def build_ngrams(self, n: int, bag_of_words: bool):
         words = self.content.split()
@@ -92,7 +96,15 @@ class Page:
             self.ngrams = list(set(self.ngrams))
 
     def calculate_jaccard_index(self, reference: 'Page'):
-        self.jaccard_index = len([x for x in self.ngrams if x in reference.ngrams]) / len([*reference.ngrams, *self.ngrams])
+        self.similarity = \
+            len([x for x in self.ngrams if x in reference.ngrams]) / len([*reference.ngrams, *self.ngrams])
+
+    def calculate_cosine_distance(self, reference: 'Page'):
+        domain = list(set(self.ngrams).union(set(reference.ngrams)))
+        vector_this = [int(ngram in self.ngrams) for ngram in domain]
+        vector_reference = [int(ngram in reference.ngrams) for ngram in domain]
+        self.similarity = \
+            np.dot(vector_this, vector_reference) / (np.linalg.norm(vector_this) * np.linalg.norm(vector_reference))
 
 
 def build_pages_database(initial_url: str, n_gram_size: int, max_depth: int, bag_of_words: bool) -> List[Page]:
@@ -120,6 +132,7 @@ def build_pages_database(initial_url: str, n_gram_size: int, max_depth: int, bag
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('url', nargs=1, metavar='URL', help='initial URL to parse')
+    parser.add_argument('algorithm', choices=['jaccard_index', 'cosine_distance'], help='similarity algorithm to use')
     parser.add_argument('--depth', dest='depth', default=2, type=int, help='max depth of the crawler')
     parser.add_argument('--n-gram-size', dest='n_gram_size', default=2, type=int, help='size of n-grams')
     parser.add_argument('--bag-of-words', dest='bag_of_words', action='store_true', help='use bag-of-words mode')
@@ -133,13 +146,16 @@ def main():
     reference = pages[0]
     child_pages = pages[1:]
     for page in child_pages:
-        page.calculate_jaccard_index(reference)
+        if args.algorithm == 'jaccard_index':
+            page.calculate_jaccard_index(reference)
+        elif args.algorithm == 'cosine_distance':
+            page.calculate_cosine_distance(reference)
 
-    child_pages.sort(key=lambda p: p.jaccard_index, reverse=True)
+    child_pages.sort(key=lambda p: p.similarity, reverse=True)
 
-    print('jaccard_index,url')
+    print(f'{args.algorithm},url')
     for page in child_pages[:3]:
-        print(f'{page.jaccard_index},{page.url}')
+        print(f'{page.similarity},{page.url}')
 
 
 if __name__ == '__main__':
