@@ -4,6 +4,7 @@ import ssl
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import List
+from urllib.error import URLError
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
@@ -27,7 +28,7 @@ class SinglePageHTMLParser(HTMLParser):
             with urlopen(self.url, timeout=TIMEOUT_SECONDS,
                          context=ssl.create_default_context(cafile=certifi.where())) as u:
                 self.feed(u.read().decode('utf8'))
-        except Exception as e:
+        except URLError as e:
             print(f'Cannot access {self.url}: {e}')
         finally:
             # sanitize links
@@ -96,8 +97,9 @@ class Page:
             self.ngrams = list(set(self.ngrams))
 
     def calculate_jaccard_index(self, reference: 'Page'):
-        self.similarity = \
-            len([x for x in self.ngrams if x in reference.ngrams]) / len([*reference.ngrams, *self.ngrams])
+        intersection = [x for x in self.ngrams if x in reference.ngrams]
+        union = [*reference.ngrams, *self.ngrams]
+        self.similarity = len(intersection) / len(union)
 
     def calculate_cosine_distance(self, reference: 'Page'):
         domain = list(set(self.ngrams).union(set(reference.ngrams)))
@@ -138,6 +140,8 @@ def main():
     parser.add_argument('--bag-of-words', dest='bag_of_words', action='store_true', help='use bag-of-words mode')
     args = parser.parse_args()
 
+    if args.depth < 1:
+        raise Exception('depth must be > 0')
     if args.n_gram_size < 1:
         raise Exception('size of n-grams must be > 0')
 
