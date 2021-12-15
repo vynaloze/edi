@@ -1,16 +1,12 @@
 import argparse
 import csv
 import re
-import ssl
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import List
-from urllib.error import URLError
 from urllib.parse import urlparse
-from urllib.request import urlopen
 
-import certifi
-
+import requests
 
 TIMEOUT_SECONDS = 10
 
@@ -26,13 +22,13 @@ class SinglePageHTMLParser(HTMLParser):
 
     def parse(self):
         try:
-            with urlopen(self.url, timeout=TIMEOUT_SECONDS,
-                         context=ssl.create_default_context(cafile=certifi.where())) as u:
-                self.feed(u.read().decode('utf8'))
-        except URLError as e:
+            r = requests.get(self.url, timeout=TIMEOUT_SECONDS)
+            if r.ok:
+                self.feed(r.text)
+            else:
+                r.raise_for_status()
+        except requests.exceptions.RequestException as e:
             print(f'Cannot access {self.url}: {e}')
-        except UnicodeError as e:
-            print(f'Invalid encoding for {self.url}: {e}')
         finally:
             # sanitize links
             self.links = [l.rstrip('/') for l in self.links]
@@ -100,8 +96,12 @@ class Page:
             csv.writer(f, dialect='unix').writerow(['category', 'URL', 'text'])
 
 
+def _domain_name(url):
+    return urlparse(url).netloc.lstrip('www.')
+
+
 def visit_pages(initial_urls: List[str], subpage_limit: int, output_file: str):
-    remaining_subpages = {u: subpage_limit for u in initial_urls}
+    remaining_subpages = {_domain_name(u): subpage_limit for u in initial_urls}
     pages = [Page(u, u, '') for u in initial_urls]
 
     i = 0
@@ -115,18 +115,21 @@ def visit_pages(initial_urls: List[str], subpage_limit: int, output_file: str):
         for url in html_parser.links:
             parsed_url = urlparse(url)
             base_url = f'{parsed_url.scheme}://{parsed_url.netloc}'
-            if remaining_subpages.get(base_url, -1) > 0 and url not in [p.URL for p in pages]:
-                pages.append(Page(base_url, url, ''))
-                remaining_subpages[base_url] -= 1
-
+            domain = _domain_name(url)
+            if remaining_subpages.get(domain, -1) > 0:
+                if url not in [p.URL for p in pages]:
+                    pages.append(Page(base_url, url, ''))
+                    remaining_subpages[domain] -= 1
+            else:
+                break
         i += 1
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('url', nargs='*', metavar='URL', help='initial URLs to visit')
+    parser.add_argument('url', nargs=5, metavar='URL', help='initial URLs to visit')
     parser.add_argument('--out', dest='output_file', default='out.csv', help='output file')
-    parser.add_argument('--limit', dest='subpage_limit', default=10, help='limit of subpages to save')  # TODO
+    parser.add_argument('--limit', dest='subpage_limit', default=100, help='limit of subpages to save')
     args = parser.parse_args()
 
     initial_urls = [u.rstrip('/') for u in args.url]
