@@ -43,10 +43,11 @@ def main():
     df['bow'] = df.apply(lambda x: bag_of_words_vector(x['text'], vocab), axis=1)
     df['tfidf'] = df.apply(lambda x: tf_idf_vector(x['text'], vocab), axis=1)
 
-    bow_clusters = kmeans(np.array(df['bow'].tolist()))
-    print(bow_clusters)
-    tfidf_clusters = kmeans(np.array(df['tfidf'].tolist()))
-    print(tfidf_clusters)
+    df['bow_cluster'] = kmeans(np.array(df['bow'].tolist()))
+    df['tfidf_cluster'] = kmeans(np.array(df['tfidf'].tolist()))
+
+    pd.set_option("display.max_rows", None, "display.max_columns", None)
+    print(df.iloc[:, 5:7])
 
 
 if __name__ == '__main__':
